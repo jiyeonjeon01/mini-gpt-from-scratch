@@ -9,8 +9,8 @@ PyTorch로 GPT 계열 Decoder-only Transformer를 처음부터 구현하고, 무
 
 - [x] 3편 #1: 프로젝트 구성, 문자 단위 토크나이저, 학습 데이터 준비, Train/Validation 분리, `get_batch`
 - [x] 3편 #2: 모델 구현 (Token/Position Embedding, Causal Self-Attention, Pre-LN Transformer Block, LM Head, Loss)
-- [ ] 학습 루프 (AdamW, Train/Validation Loss)
-- [ ] 텍스트 생성
+- [x] 3편 #3: 학습 루프(AdamW, Train/Validation Loss, Checkpoint, Resume)와 텍스트 생성
+  - 2,000 Step 학습 완료: Train Loss 1.4405, 최저 Validation Loss 1.6442 (step 2000)
 
 ## 모델 설정 (v1, 블로그 '6. 모델 설계' 기준)
 
@@ -46,8 +46,10 @@ idx (B, T)
 | `tokenizer.py` | 문자 단위 토크나이저 (encode / decode / save / load) |
 | `data.py` | 데이터 다운로드, Train/Validation 분리, 배치 생성. 직접 실행하면 전체 과정을 출력 |
 | `model.py` | Mini GPT 모델 (`CausalSelfAttention`, `FeedForward`, `TransformerBlock`, `MiniGPT`). 직접 실행하면 파라미터 수, Shape, 초기 loss를 출력 |
+| `train.py` | AdamW 학습, Train/Validation Loss 기록(CSV), Checkpoint 저장·재개, 학습 전후 샘플 출력 |
+| `generate.py` | 텍스트 생성 (Temperature, Top-k), Checkpoint 불러오기 |
 | `check_env.py` | Python, PyTorch, CUDA, GPU 확인 |
-| `tests/` | pytest 테스트 (토크나이저, 데이터 분리·배치, 다운로드, 모델) |
+| `tests/` | pytest 테스트 (토크나이저, 데이터 분리·배치, 다운로드, 모델, 학습, 생성) |
 | `pyproject.toml`, `uv.lock` | 의존성 선언과 재현용 고정 버전 |
 
 ## 설치와 실행 (WSL2 Ubuntu, Python 3.12, uv)
@@ -73,6 +75,14 @@ uv run python data.py
 # 모델 구조 확인 (파라미터 수, logits Shape, 초기 loss)
 uv run python model.py
 
+# 학습 (기본값: 2,000 Step, checkpoints/, logs/train_log.csv)
+uv run python train.py
+# 짧은 시험 학습은 저장 경로를 분리한다
+uv run python train.py --max-steps 100 --eval-interval 10 --out-dir checkpoints/pilot --log-file logs/pilot.csv
+
+# 텍스트 생성 (기본값: checkpoints/best.pt, prompt "ROMEO:", 300자, temperature 1.0, top_k 20, seed 1337)
+uv run python generate.py --prompt "ROMEO:"
+
 # 테스트
 uv run pytest -q
 ```
@@ -95,6 +105,36 @@ uv run pytest -q
 - 다운로드 방식: `data/input.txt.part`에 먼저 받고, 받은 크기가 서버가 알려준 크기(Content-Length)와
   같을 때만 `input.txt`로 교체합니다. 중간에 실패하면 `input.txt`가 만들어지지 않으므로
   다시 실행하면 처음부터 내려받습니다. 이미 `input.txt`가 있으면 다시 받지 않습니다.
+
+## 학습과 생성
+
+- 설정(`config.py`의 `TrainConfig`): AdamW (betas 0.9, 0.99), learning rate 1e-3 고정(스케줄러 없음),
+  weight decay 0.1 (2차원 이상 파라미터에만), batch 32 × block 128, gradient clip 1.0, FP32, seed 1337,
+  100 Step마다 Train/Validation Loss를 20배치 평균으로 측정
+- 난수 분리: 학습 배치, 평가 배치(매번 같은 배치), 생성은 각각 별도의 Generator를 사용합니다.
+- Checkpoint: `init.pt`(학습 전), `best.pt`(Validation Loss 최저), `last.pt`(마지막). 임시 파일에 저장한 뒤 교체합니다.
+  - `torch.load(..., weights_only=True)`로 읽습니다. 출처를 모르는 `.pt` 파일은 열지 마세요.
+  - 모델 설정, Vocabulary, 학습 데이터 SHA-256, Optimizer, RNG 상태를 함께 저장합니다.
+- 재개: `uv run python train.py --resume checkpoints/last.pt --max-steps 3000`
+  - 데이터(Vocabulary·길이·해시)나 모델 구조가 다르면 재개하지 않습니다.
+  - 학습 설정(learning rate 등)이 다르면 중단하며, 의도한 변경이면 `--allow-config-change`를 사용합니다.
+  - 로그에 재개할 Step 이후의 기록이 있으면 중단합니다. 기존 기록은 지우지 않으므로 `--log-file`로 새 경로를 지정하세요.
+  - 새 학습은 Checkpoint가 이미 있는 폴더에 저장하지 않습니다 (다른 `--out-dir` 사용).
+- 재현성: CPU에서는 "연속 학습"과 "중단 후 재개"의 결과가 같음을 테스트로 확인합니다.
+  GPU에서는 일부 연산이 비결정적이어서 비트 단위까지 같다고 보장하지 않으며, 같은 seed라도 CPU와 GPU의 생성 결과는 다릅니다.
+
+### 학습 결과 (2,000 Step, RTX 3060, 기본 설정)
+
+| step | 0 | 500 | 1000 | 1500 | 2000 |
+|---|---|---|---|---|---|
+| Train Loss | 4.1747 | 1.9934 | 1.6646 | 1.5294 | **1.4405** |
+| Validation Loss | 4.1784 | 2.0721 | 1.8269 | 1.7189 | **1.6442** |
+
+- 최저 Validation Loss는 마지막 step 2000에서 나왔습니다 (100 Step마다 평가한 21회 모두 직전보다 낮아짐).
+- 실행 시간: 학습 루프 76.7초, 전체 프로세스 80.1초 (데이터 준비와 학습 전후 샘플 생성 포함)
+- `ROMEO:`로 생성한 결과는 학습 전 무작위 문자열에서, 학습 후 "인물 이름:" 다음 줄에 대사가 오는 대본 형식으로 바뀌었습니다.
+  철자가 틀린 단어가 섞여 있고 문장의 의미는 이어지지 않습니다.
+- 모든 Step의 기록은 `logs/train_log.csv`에 저장됩니다 (Git 제외).
 
 ## 문자 단위 토크나이저
 
@@ -125,11 +165,11 @@ uv run pytest -v     # 테스트별 결과
 모델 테스트에는 미래 토큰을 바꿔도 과거 위치의 Logits가 변하지 않는지, 미래 위치로 Gradient가 흐르지 않는지
 확인하는 Causal Mask 테스트가 포함되어 있습니다 (`uv run pytest tests/test_model.py -v -k causal`).
 CUDA 테스트는 GPU를 사용할 수 있을 때만 실행됩니다.
+학습·생성 테스트는 작은 합성 데이터와 작은 모델로 CPU에서 실행되며, 실제 학습은 하지 않습니다.
 
 ## 다음 단계
 
-- `train.py`: AdamW 학습 루프, Train/Validation Loss 측정, 체크포인트 저장
-- 텍스트 생성 (`generate`)
+- 학습 결과 분석과 추가 실험 (학습 Step 수, Dropout 등)
 
 ## License
 

@@ -46,6 +46,18 @@ class TrainConfig:
     batch_size: int = 32  # 한 번에 처리하는 시퀀스 개수 (B)
     seed: int = 1337
 
+    # 학습 (구현 #3)
+    learning_rate: float = 1e-3  # 스케줄러 없이 고정
+    weight_decay: float = 0.1  # 2차원 이상 파라미터(Linear·Embedding 가중치)에만 적용
+    beta1: float = 0.9
+    beta2: float = 0.99
+    max_steps: int = 2000
+    eval_interval: int = 100  # 몇 Step마다 Train/Validation Loss를 측정할지
+    eval_batches: int = 20  # 평가 한 번에 사용하는 배치 수
+    grad_clip: float = 1.0
+    checkpoint_dir: Path = PROJECT_ROOT / "checkpoints"
+    log_path: Path = PROJECT_ROOT / "logs" / "train_log.csv"
+
 
 def set_seed(seed: int) -> None:
     """재현 가능한 실험을 위해 모든 난수 생성기의 Seed를 고정한다."""
