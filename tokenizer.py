@@ -36,7 +36,13 @@ class CharTokenizer:
 
     def decode(self, ids) -> str:
         """토큰 ID 목록 → 문자열 (list와 1차원 Tensor 모두 받을 수 있다)"""
-        return "".join(self.itos[int(i)] for i in ids)
+        try:
+            return "".join(self.itos[int(i)] for i in ids)
+        except KeyError as e:
+            raise ValueError(
+                f"Vocabulary에 없는 토큰 ID: {e.args[0]} "
+                f"(유효 범위 0 ~ {self.vocab_size - 1})"
+            ) from None
 
     def save(self, path: str | Path) -> None:
         """Vocabulary를 JSON으로 저장한다. 학습과 생성에서 같은 ID 체계를 쓰기 위해 필요하다."""

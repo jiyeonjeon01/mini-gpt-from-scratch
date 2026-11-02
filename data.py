@@ -4,6 +4,8 @@
     uv run python data.py
 """
 
+import os
+import shutil
 import urllib.request
 from pathlib import Path
 
@@ -19,14 +21,31 @@ DATA_URL = (
 )
 
 
-def download_data(path: str | Path, url: str = DATA_URL) -> None:
-    """파일이 없을 때만 학습 텍스트를 내려받는다."""
+def download_data(path: str | Path, url: str = DATA_URL, timeout: float = 30) -> None:
+    """파일이 없을 때만 학습 텍스트를 내려받는다.
+
+    임시 파일(.part)에 먼저 받은 뒤, 끝까지 받았을 때만 최종 경로로 교체한다.
+    중간에 실패하면 최종 파일이 만들어지지 않으므로, 다음 실행에서 다시 내려받는다.
+    """
     path = Path(path)
     if path.exists():
         return
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(path.name + ".part")
     print(f"다운로드: {url}")
-    urllib.request.urlretrieve(url, path)
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp, open(tmp_path, "wb") as f:
+            shutil.copyfileobj(resp, f)
+            expected = resp.headers.get("Content-Length")
+        # 서버가 알려준 크기와 실제로 받은 크기가 다르면 불완전한 파일이다
+        if expected is not None and tmp_path.stat().st_size != int(expected):
+            raise OSError(
+                f"다운로드 크기 불일치: {tmp_path.stat().st_size} / {expected} bytes"
+            )
+        os.replace(tmp_path, path)  # 같은 디렉터리 안에서의 교체는 원자적이다
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def load_text(path: str | Path) -> str:
@@ -83,6 +102,9 @@ def main() -> None:
     print(f"전체 문자 수: {len(text):,}")
 
     # 2. 토크나이저 생성 (전체 텍스트 기준) 및 저장
+    #    Vocabulary(문자 → ID 표)만 전체 텍스트에서 만든다. 검증 구간에만 있는 문자도
+    #    ID를 받아 encode 오류가 나지 않게 하기 위함이다. 학습·검증의 정답 텍스트는
+    #    아래 split_data에서 분리되므로 검증 문장이 학습에 쓰이지는 않는다.
     tokenizer = CharTokenizer.from_text(text)
     tokenizer.save(train_cfg.vocab_path)
     print(f"Vocabulary 크기: {tokenizer.vocab_size}")
@@ -92,12 +114,16 @@ def main() -> None:
     data = torch.tensor(tokenizer.encode(text), dtype=torch.long)
     train_data, val_data = split_data(data, train_cfg.train_ratio)
     print(f"학습 토큰 수: {len(train_data):,} / 검증 토큰 수: {len(val_data):,}")
+    val_only = set(text[len(train_data) :]) - set(text[: len(train_data)])
+    print(f"검증 구간에만 있는 문자: {sorted(val_only)}")
 
-    # 4. 배치 하나 생성
+    # 4. 배치 하나 생성 (학습용과 검증용 각각)
     x, y = get_batch(train_data, train_cfg.batch_size, model_cfg.block_size, device)
+    vx, vy = get_batch(val_data, train_cfg.batch_size, model_cfg.block_size, device)
     print(f"\ndevice: {device}")
     print(f"x shape: {tuple(x.shape)}  (B, T)  dtype: {x.dtype}")
     print(f"y shape: {tuple(y.shape)}  (B, T)  dtype: {y.dtype}")
+    print(f"검증 x/y shape: {tuple(vx.shape)} / {tuple(vy.shape)}")
 
     # 5. 첫 번째 시퀀스의 앞부분을 문자로 확인 (y가 x보다 한 칸 뒤인지)
     n = 40

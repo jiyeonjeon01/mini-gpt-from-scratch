@@ -26,6 +26,23 @@ def test_unknown_char_raises():
         tok.encode("I love ML")
 
 
+@pytest.mark.parametrize("bad_id", [7, 100, -1])
+def test_invalid_token_id_raises(bad_id):
+    """Vocabulary 범위(0 ~ vocab_size-1) 밖의 ID는 decode할 수 없다."""
+    tok = CharTokenizer.from_text("I love AI")  # vocab_size = 7
+    with pytest.raises(ValueError, match="Vocabulary에 없는 토큰 ID"):
+        tok.decode([2, 0, bad_id])
+
+
+def test_decode_tensor():
+    torch = pytest.importorskip("torch")
+    tok = CharTokenizer.from_text("I love AI")
+    ids = torch.tensor(tok.encode("I love AI"))
+    assert tok.decode(ids) == "I love AI"
+    with pytest.raises(ValueError):
+        tok.decode(torch.tensor([7]))
+
+
 def test_duplicate_chars_rejected():
     with pytest.raises(ValueError):
         CharTokenizer(["a", "b", "a"])

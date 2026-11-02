@@ -2,9 +2,14 @@
 
 import random
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import torch
+
+# 어느 디렉터리에서 실행해도 같은 data/ 를 쓰도록 프로젝트 루트(이 파일 위치) 기준으로 고정한다
+PROJECT_ROOT = Path(__file__).resolve().parent
+DATA_DIR = PROJECT_ROOT / "data"
 
 
 @dataclass
@@ -35,8 +40,8 @@ class GPTConfig:
 class TrainConfig:
     """데이터와 학습 관련 설정"""
 
-    data_path: str = "data/input.txt"
-    vocab_path: str = "data/vocab.json"
+    data_path: Path = DATA_DIR / "input.txt"
+    vocab_path: Path = DATA_DIR / "vocab.json"
     train_ratio: float = 0.9  # 앞 90%는 학습, 뒤 10%는 검증
     batch_size: int = 32  # 한 번에 처리하는 시퀀스 개수 (B)
     seed: int = 1337
