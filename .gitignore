@@ -1,0 +1,10 @@
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 실행 시 생성되는 파일 (용량이 크거나 다시 만들 수 있음)
+data/
+checkpoints/
+logs/
