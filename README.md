@@ -8,7 +8,7 @@ PyTorch로 GPT 계열 Decoder-only Transformer를 처음부터 구현하고, 무
 ## 현재 진행 상황
 
 - [x] 3편 #1: 프로젝트 구성, 문자 단위 토크나이저, 학습 데이터 준비, Train/Validation 분리, `get_batch`
-- [ ] 모델 구현 (Token/Position Embedding, Causal Self-Attention, Transformer Block)
+- [x] 3편 #2: 모델 구현 (Token/Position Embedding, Causal Self-Attention, Pre-LN Transformer Block, LM Head, Loss)
 - [ ] 학습 루프 (AdamW, Train/Validation Loss)
 - [ ] 텍스트 생성
 
@@ -23,8 +23,20 @@ PyTorch로 GPT 계열 Decoder-only Transformer를 처음부터 구현하고, 무
 | ffn_dim | 512 | FFN 내부 차원 |
 
 - 구조: Character-level Tokenizer, Learned Positional Embedding, Multi-Head Causal Self-Attention,
-  Pre-LN Transformer, GELU FFN, AdamW
-- 현재 코드에는 위 값이 `config.py`의 `GPTConfig`로만 정의되어 있고, 모델 자체는 아직 구현 전입니다.
+  Pre-LN Transformer, GELU FFN, AdamW (AdamW는 학습 단계에서 사용 예정)
+- 모델은 `model.py`에 구현되어 있습니다. 입력 `(B, T)` 토큰 ID → 출력 `(B, T, vocab_size)` Logits
+- 파라미터 수: **826,433개** (vocab_size=65, Linear bias 포함, Token Embedding과 LM Head 가중치 비공유)
+  - 계산식: `809,728 + 257 × vocab_size` (vocab_size=100으로 가정하면 835,428)
+- 초기화: Linear·Embedding 가중치 N(0, 0.02), Linear bias 0, LayerNorm weight 1 · bias 0
+- Dropout 위치: Embedding 합 뒤, Attention Softmax 뒤, Attention 출력 Projection 뒤, FFN 출력 뒤 (현재 모두 0.0)
+
+```text
+idx (B, T)
+ → Token Embedding (B, T, 128) + Position Embedding (T, 128)
+ → [LN → Causal Multi-Head Attention → Residual → LN → FFN(128→512→128) → Residual] × 4
+ → Final LayerNorm → LM Head (128 → vocab_size)
+ → logits (B, T, vocab_size), targets가 있으면 Cross-Entropy loss
+```
 
 ## 파일 구성
 
@@ -33,8 +45,9 @@ PyTorch로 GPT 계열 Decoder-only Transformer를 처음부터 구현하고, 무
 | `config.py` | 모델·학습 설정(`GPTConfig`, `TrainConfig`), 프로젝트 루트 기준 데이터 경로, Seed 고정, Device 선택 |
 | `tokenizer.py` | 문자 단위 토크나이저 (encode / decode / save / load) |
 | `data.py` | 데이터 다운로드, Train/Validation 분리, 배치 생성. 직접 실행하면 전체 과정을 출력 |
+| `model.py` | Mini GPT 모델 (`CausalSelfAttention`, `FeedForward`, `TransformerBlock`, `MiniGPT`). 직접 실행하면 파라미터 수, Shape, 초기 loss를 출력 |
 | `check_env.py` | Python, PyTorch, CUDA, GPU 확인 |
-| `tests/` | pytest 테스트 (토크나이저, 데이터 분리·배치, 다운로드) |
+| `tests/` | pytest 테스트 (토크나이저, 데이터 분리·배치, 다운로드, 모델) |
 | `pyproject.toml`, `uv.lock` | 의존성 선언과 재현용 고정 버전 |
 
 ## 설치와 실행 (WSL2 Ubuntu, Python 3.12, uv)
@@ -56,6 +69,9 @@ uv run python check_env.py
 
 # 데이터 준비 및 배치 확인
 uv run python data.py
+
+# 모델 구조 확인 (파라미터 수, logits Shape, 초기 loss)
+uv run python model.py
 
 # 테스트
 uv run pytest -q
@@ -106,10 +122,12 @@ uv run pytest -v     # 테스트별 결과
 ```
 
 다운로드 테스트는 네트워크 없이 가짜 응답으로 실행됩니다.
+모델 테스트에는 미래 토큰을 바꿔도 과거 위치의 Logits가 변하지 않는지, 미래 위치로 Gradient가 흐르지 않는지
+확인하는 Causal Mask 테스트가 포함되어 있습니다 (`uv run pytest tests/test_model.py -v -k causal`).
+CUDA 테스트는 GPU를 사용할 수 있을 때만 실행됩니다.
 
 ## 다음 단계
 
-- `model.py`: Token/Position Embedding, Multi-Head Causal Self-Attention, Pre-LN Transformer Block, GELU FFN, LM Head
 - `train.py`: AdamW 학습 루프, Train/Validation Loss 측정, 체크포인트 저장
 - 텍스트 생성 (`generate`)
 
