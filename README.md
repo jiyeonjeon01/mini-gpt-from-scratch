@@ -60,3 +60,9 @@ Windows에서는 CPU 버전으로 설치됩니다. 토크나이저와 데이터 
 | n_head | 4 |
 | n_layer | 4 |
 | ffn_dim | 512 |
+
+
+## License
+
+Copyright (c) 2026 Jiyeon Jeon. All rights reserved.
+자세한 내용은 [LICENSE](LICENSE)를 참고하세요.
